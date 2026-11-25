@@ -74,7 +74,17 @@ const alive = (B, c) => B.some(p => p && p.t === 'k' && p.c === c);
 const rel = (c, x) => (c === 'w' ? x : (7 - (x >> 3)) * 8 + (x & 7));
 // c의 시점에서 몇 번째 랭크인지 (0 = 내 첫 줄)
 const rankOf = (c, x) => (c === 'w' ? x >> 3 : 7 - (x >> 3));
-const shuffleArr = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// 난수: 온라인에서는 방의 시드로 만든 결정적 난수를 넣어, 두 브라우저가 같은 결과를 내게 한다.
+let rnd = Math.random;
+function setRng(f) { rnd = f || Math.random; }
+// 시드 문자열 + 행동 번호로 난수 생성기를 만든다 (mulberry32)
+function seededRng(seed, k) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) { h = Math.imul(h ^ seed.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  let a = (h ^ Math.imul(k + 1, 0x9E3779B1)) >>> 0;
+  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const shuffleArr = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 function initial() {
   const B = Array(64).fill(null), back = 'rnbqkbnr';
@@ -363,7 +373,7 @@ function offers(s, c, tier, round) {
 }
 function rollTier(r) {
   const W = [[0.55, 0.4, 0.05], [0.35, 0.5, 0.15], [0.2, 0.5, 0.3], [0.1, 0.45, 0.45]][Math.min(r, 4) - 1];
-  let x = Math.random();
+  let x = rnd();
   for (let i = 0; i < 3; i++) { if (x < W[i]) return ['silver', 'gold', 'prism'][i]; x -= W[i]; }
   return 'gold';
 }
@@ -384,4 +394,4 @@ function note(s, m, c, ev, chk) {
   return t + (chk ? '+' : '');
 }
 
-export {AUG, CAT_KO, ROUND_CATS, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, gen, apply, inDanger, legal, tick, reviveTarget, avail, instant, offers, rollTier, sqName, note};
+export {setRng, seededRng, AUG, CAT_KO, ROUND_CATS, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, gen, apply, inDanger, legal, tick, reviveTarget, avail, instant, offers, rollTier, sqName, note};

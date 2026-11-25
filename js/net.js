@@ -1,16 +1,24 @@
 // 동기화 계층.
 //  - firebase: 실제 온라인 대전. Firebase 익명 로그인 + Realtime Database.
 //  - mem: 개발·테스트용. 같은 브라우저의 탭끼리 localStorage + BroadcastChannel로 동기화한다 (?net=mem).
-// 두 구현 모두 같은 인터페이스를 가진다:
-//   uid, subscribe(id, cb, onErr), create(id, room) -> bool, update(id, fn) -> bool, presence(id, key)
-// update의 fn은 현재 방 객체를 받아 새 방 객체를 돌려준다. undefined를 돌려주면 쓰기를 취소한다.
+// 두 구현 모두 같은 모양이다:
+//   uid
+//   subscribe(id, cb, onErr)            방이 바뀔 때마다 cb(방 또는 null)
+//   create(id, room) -> 'ok'|'exists'|'denied'   (보안 규칙: 한 사람당 20초에 방 하나)
+//   append(id, i, action, extra) -> bool  actions/i가 비어 있을 때만 쓴다
+//   patch(id, paths) -> bool             방 안의 여러 경로를 한 번에 바꾼다 (null이면 지움)
+//   staleRooms(before, n) -> [{id, r}]    updatedAt이 before보다 오래된 방
+//   remove(id) -> bool
+//   presence(id, uid)
+// TIME 자리에는 서버 시각이 들어간다.
 
+export const TIME = {'.sv': 'timestamp'};
 const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
 
 export async function connect(config, kind) {
   if (kind === 'mem') return memNet();
   if (!config) return null;
-  const [{ initializeApp }, { getAuth, signInAnonymously }, D] = await Promise.all([
+  const [{initializeApp}, {getAuth, signInAnonymously}, D] = await Promise.all([
     import(FB + 'firebase-app.js'),
     import(FB + 'firebase-auth.js'),
     import(FB + 'firebase-database.js'),
@@ -19,24 +27,33 @@ export async function connect(config, kind) {
   const auth = getAuth(app);
   const db = D.getDatabase(app);
   // 이미 익명 사용자가 있으면 그 사용자를 그대로 돌려준다 → 새로고침해도 같은 자리로 돌아온다.
-  const { user } = await signInAnonymously(auth);
+  const {user} = await signInAnonymously(auth);
   const R = id => D.ref(db, 'rooms/' + id);
+  const ok = p => p.then(() => true, () => false);
   return {
     uid: user.uid,
-    subscribe(id, cb, onErr) {
-      return D.onValue(R(id), snap => cb(snap.val()), onErr);
-    },
+    subscribe(id, cb, onErr) { return D.onValue(R(id), snap => cb(snap.val()), onErr); },
     async create(id, room) {
-      const res = await D.runTransaction(R(id), cur => (cur === null ? room : undefined));
-      return res.committed;
+      try {
+        await D.update(D.ref(db), {['rooms/' + id]: room, ['limits/' + user.uid]: TIME});
+        return 'ok';
+      } catch (e) {
+        const snap = await D.get(R(id)).catch(() => null);
+        return snap && snap.exists() ? 'exists' : 'denied';
+      }
     },
-    async update(id, fn) {
-      // 캐시가 비어 있으면 첫 호출에 null이 온다. null을 그대로 돌려주면 서버가 실제 값으로 다시 호출한다.
-      const res = await D.runTransaction(R(id), cur => (cur === null ? null : fn(cur)));
-      return res.committed && res.snapshot.exists();
+    append(id, i, action, extra) { return ok(D.update(R(id), {['actions/' + i]: action, ...extra})); },
+    patch(id, paths) { return ok(D.update(R(id), paths)); },
+    async staleRooms(before, n) {
+      const q = D.query(D.ref(db, 'rooms'), D.orderByChild('updatedAt'), D.endAt(before), D.limitToFirst(n));
+      const snap = await D.get(q);
+      const out = [];
+      snap.forEach(ch => { out.push({id: ch.key, r: ch.val()}); });
+      return out;
     },
-    presence(id, key) {
-      const me = D.ref(db, `rooms/${id}/online/${key}`);
+    remove(id) { return ok(D.remove(R(id))); },
+    presence(id, uid) {
+      const me = D.ref(db, `rooms/${id}/online/${uid}`);
       D.onValue(D.ref(db, '.info/connected'), snap => {
         if (snap.val() !== true) return;
         D.onDisconnect(me).remove().then(() => D.set(me, true)).catch(() => {});
@@ -45,6 +62,7 @@ export async function connect(config, kind) {
   };
 }
 
+// 테스트용: 보안 규칙 중 핵심(덮어쓰기 금지, 좌석 선점, 생성 속도)만 흉내 낸다.
 function memNet() {
   let uid = sessionStorage.getItem('mem-uid');
   if (!uid) {
@@ -52,14 +70,13 @@ function memNet() {
     sessionStorage.setItem('mem-uid', uid);
   }
   const key = id => 'mem-room:' + id;
-  // 탭 사이 localStorage 반영이 늦을 수 있어서, 메시지로 받은 최신 값을 따로 들고 있다가 더 새 것을 쓴다.
   const last = {};
   const read = id => {
     let ls = null;
     try { ls = JSON.parse(localStorage.getItem(key(id))); } catch {}
     const c = last[id];
     const pick = c && (!ls || (c._t || 0) > (ls._t || 0)) ? c : ls;
-    return pick ? JSON.parse(JSON.stringify(pick)) : null;
+    return pick && !pick._gone ? JSON.parse(JSON.stringify(pick)) : null;
   };
   const subs = {}, chans = {};
   const notify = id => (subs[id] || []).forEach(f => f(read(id)));
@@ -70,16 +87,22 @@ function memNet() {
     }
     return chans[id];
   };
-  // Firebase처럼 null 값과 빈 배열은 저장하지 않는다.
-  const strip = v => JSON.parse(JSON.stringify(v, (k, x) => (x === null || (Array.isArray(x) && !x.length) ? undefined : x)));
+  const fix = v => JSON.parse(JSON.stringify(v, (k, x) => (x && x['.sv'] === 'timestamp' ? Date.now() : x === null ? undefined : x)));
   const write = (id, v) => {
-    const s = strip(v);
+    const s = v ? fix(v) : {_gone: 1};
     s._t = performance.timeOrigin + performance.now();
     last[id] = s;
-    localStorage.setItem(key(id), JSON.stringify(s));
+    if (!s._gone) localStorage.setItem(key(id), JSON.stringify(s)); else localStorage.removeItem(key(id));
     chan(id).postMessage(s);
     setTimeout(() => notify(id));
   };
+  const setPath = (o, path, v) => {
+    const ps = path.split('/');
+    let cur = o;
+    for (let i = 0; i < ps.length - 1; i++) { if (typeof cur[ps[i]] !== 'object' || cur[ps[i]] === null) cur[ps[i]] = {}; cur = cur[ps[i]]; }
+    if (v === null || v === undefined) delete cur[ps[ps.length - 1]]; else cur[ps[ps.length - 1]] = v;
+  };
+  const getPath = (o, path) => path.split('/').reduce((c, k) => (c == null ? undefined : c[k]), o);
   return {
     uid,
     subscribe(id, cb) {
@@ -88,26 +111,42 @@ function memNet() {
       setTimeout(() => cb(read(id)));
     },
     async create(id, room) {
-      if (read(id)) return false;
+      if (read(id)) return 'exists';
+      const lim = +(localStorage.getItem('mem-limit:' + uid) || 0);
+      if (Date.now() - lim < 20000 && !sessionStorage.getItem('mem-nolimit')) return 'denied';
+      localStorage.setItem('mem-limit:' + uid, String(Date.now()));
       write(id, room);
-      return true;
+      return 'ok';
     },
-    async update(id, fn) {
+    async append(id, i, action, extra) {
       const cur = read(id);
-      if (cur === null) return false;
-      const next = fn(cur);
-      if (next === undefined) return false;
-      write(id, next);
+      if (!cur || getPath(cur, 'actions/' + i) !== undefined) return false;
+      setPath(cur, 'actions/' + i, action);
+      for (const [p, v] of Object.entries(extra || {})) setPath(cur, p, v);
+      write(id, cur);
       return true;
     },
-    presence(id, key) {
-      const set = on => {
-        const cur = read(id);
-        if (!cur) return;
-        cur.online = cur.online || {};
-        if (on) cur.online[key] = true; else delete cur.online[key];
-        write(id, cur);
-      };
+    async patch(id, paths) {
+      const cur = read(id);
+      if (!cur) return false;
+      for (const p of Object.keys(paths)) if (p.startsWith('seats/') && getPath(cur, p) !== undefined) return false;
+      for (const [p, v] of Object.entries(paths)) setPath(cur, p, v);
+      write(id, cur);
+      return true;
+    },
+    async staleRooms(before, n) {
+      const out = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k.startsWith('mem-room:')) continue;
+        const r = read(k.slice(9));
+        if (r && r.updatedAt <= before) out.push({id: k.slice(9), r});
+      }
+      return out.slice(0, n);
+    },
+    async remove(id) { write(id, null); return true; },
+    presence(id, key2) {
+      const set = on => { const cur = read(id); if (!cur) return; setPath(cur, 'online/' + key2, on ? true : null); write(id, cur); };
       set(true);
       addEventListener('pagehide', () => set(false));
     },
