@@ -1,9 +1,9 @@
 // 화면과 진행. 게임 상태 S는 순수 JSON이고, 모든 변경은 act()를 거친다.
 // 한 화면 모드: act가 바로 반영하고 무르기용 기록을 남긴다.
 // 온라인 모드: act가 낙관적으로 반영한 뒤 버전 검사 트랜잭션으로 방에 저장한다. 실패하면 서버 상태로 되돌린다.
-import {AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js';
-import {connect} from './net.js';
-import {firebaseConfig} from './config.js';
+import {AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js?v=4';
+import {connect} from './net.js?v=4';
+import {firebaseConfig} from './config.js?v=4';
 
 const MARK = {p: ['pawn2', 'pawnBack', 'pawnSide', 'battlePromo', 'earlyPromo'], n: ['centaur', 'nightrider'], b: ['archbishop', 'wazirBishop'], r: ['chancellor', 'cannon'], q: ['amazon'], k: ['stride', 'knightKing']};
 const $ = id => document.getElementById(id);
