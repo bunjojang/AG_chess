@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "rooms": {
+      "$room": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('seats/w').val() === auth.uid || data.child('seats/b').val() === auth.uid || (!data.child('seats/w').exists() && newData.child('seats/w').val() === auth.uid) || (!data.child('seats/b').exists() && newData.child('seats/b').val() === auth.uid))",
+        ".validate": "$room.matches(/^[A-Z2-9]{6}$/) && newData.hasChildren(['seats', 'state', 'ver']) && newData.child('state').isString() && newData.child('state').val().length < 200000"
+      }
+    }
+  }
+}

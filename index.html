@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>증강 체스</title>
+<meta name="description" content="변형 체스 규칙을 증강처럼 골라 붙이는 체스. 한 화면 2인 또는 온라인 대전.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Do+Hyeon&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1>증강 체스</h1>
+    <p>시작할 때, 그리고 6·12·18턴을 마칠 때마다 증강 3장 중 1장을 고릅니다.</p>
+  </div>
+  <div class="tools">
+    <button id="bUndo" type="button">무르기</button>
+    <button id="bFlip" type="button">판 뒤집기</button>
+    <button id="bNew" type="button">새 게임</button>
+  </div>
+</header>
+<main class="game">
+  <section class="table" aria-label="체스판">
+    <div class="tray" id="tTop"></div>
+    <div class="board" id="board" role="grid"></div>
+    <div class="tray" id="tBot"></div>
+  </section>
+  <aside class="rail">
+    <div class="card status" id="status"></div>
+    <div class="card room" id="room"></div>
+    <div class="card">
+      <h3>기보</h3>
+      <ol class="log" id="log"></ol>
+    </div>
+    <div class="card">
+      <h3>증강이 겹칠 때</h3>
+      <ul class="rules">
+        <li>체크는 "상대가 다음 한 수로 내 킹을 없앨 수 있는 상태"입니다. 직접 잡든 폭발로 날리든 같고, 내 킹이 그 상태로 남는 수는 둘 수 없습니다.</li>
+        <li>증강은 받은 순간부터 효과가 납니다. 3체크는 그때부터 세고, 드롭은 그 뒤에 잡은 말만 손패에 들어갑니다.</li>
+        <li>언덕의 왕은 킹이 중앙으로 들어가는 수를 둬야 이깁니다.</li>
+        <li>원자 포격으로 직접 잡힌 말은 드롭 손패에 들어가고, 주변에서 휘말린 말은 그냥 사라집니다. 승급한 말은 폰으로 돌아옵니다.</li>
+        <li>폭발로 상대 킹을 날리면 내 킹이 위험해도 즉시 승리합니다.</li>
+        <li>증강은 자기 턴이 끝난 직후 고릅니다. 고른 증강 때문에 상대가 곧바로 체크에 걸릴 수 있습니다.</li>
+        <li>같은 라운드에는 양쪽이 같은 등급을 받습니다. 시작 라운드는 백이 먼저 고르고 흑은 그걸 보고 고릅니다.</li>
+      </ul>
+      <details>
+        <summary>증강 전체 목록</summary>
+        <div class="cat" id="cat"></div>
+      </details>
+    </div>
+  </aside>
+</main>
+<div class="ov" id="ov" hidden><div class="dlg" id="dlg" role="dialog" aria-modal="true"></div></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
