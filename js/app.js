@@ -1,11 +1,11 @@
 // 화면과 진행. 게임 상태 S는 순수 JSON이고, 모든 변경은 act()를 거친다.
 // 한 화면 모드: act가 바로 반영하고 무르기용 기록을 남긴다.
 // 온라인 모드: act가 낙관적으로 반영한 뒤 버전 검사 트랜잭션으로 방에 저장한다. 실패하면 서버 상태로 되돌린다.
-import {AUG, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, oth, has, alive, initial, apply, inDanger, legal, reviveTarget, offers, rollTier, sqName, note} from './engine.js';
+import {AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js';
 import {connect} from './net.js';
 import {firebaseConfig} from './config.js';
 
-const MARK = {p: ['pawn2', 'earlyPromo'], n: ['centaur'], b: ['archbishop'], r: ['chancellor'], q: ['amazon'], k: ['stride']};
+const MARK = {p: ['pawn2', 'pawnBack', 'pawnSide', 'battlePromo', 'earlyPromo'], n: ['centaur', 'nightrider'], b: ['archbishop', 'wazirBishop'], r: ['chancellor', 'cannon'], q: ['amazon'], k: ['stride', 'knightKing']};
 const $ = id => document.getElementById(id);
 const nm = c => (c === 'w' ? '백' : '흑');
 const cc = c => (c === 'w' ? 'w' : 'b');
@@ -23,11 +23,8 @@ let pending = false, claiming = false, presenceOn = false, netErr = '', copied =
 /* ---------- 게임 진행 (S만 바꾼다, 화면은 건드리지 않음) ---------- */
 function settle() {
   if (S.winner || S.pick) return;
-  if (!legal(S, S.turn).length) {
-    const ic = inDanger(S, S.turn);
-    S.winner = ic ? oth(S.turn) : 'draw';
-    S.reason = ic ? '체크메이트' : '스테일메이트';
-  }
+  // 체크메이트는 없다. 둘 수 있는 수가 하나도 없으면 그 쪽이 진다.
+  if (!legal(S, S.turn).length) { S.winner = oth(S.turn); S.reason = nm(S.turn) + '이 둘 수 있는 수가 없음'; }
 }
 function startTurn() {
   const c = S.turn;
@@ -42,11 +39,12 @@ function nextPick() {
   if (!S.tiers[q.r]) S.tiers[q.r] = rollTier(q.r);
   const tier = S.tiers[q.r];
   // 온라인에서는 후보를 고르는 사람의 화면에서만 뽑는다.
-  S.pick = {c: q.c, r: q.r, tier, opts: mode === 'local' || q.c === me ? offers(S, q.c, tier) : null};
+  S.pick = {c: q.c, r: q.r, tier, opts: mode === 'local' || q.c === me ? offers(S, q.c, tier, q.r) : null};
   return true;
 }
 function endTurn() {
   const c = S.turn;
+  tick(S, c);
   S.turns[c]++;
   if (!S.dblTurn && has(S, c, 'double')) S.dbl[c]++;
   S.dblTurn = false; S.sub = 0;
@@ -57,14 +55,19 @@ function endTurn() {
 function moveCore(m) {
   const c = S.turn, o = oth(c), s0 = S;
   const piece = m.drop ? null : s0.board[m.from];
+  const count = B => B.filter(p => p && p.c === o).length;
+  const before = count(s0.board);
   const [n, ev] = apply(s0, m, c);
   S = n;
   S.last = {from: m.drop ? null : m.from, to: m.to, boom: ev.boom};
+  const kingMoved = piece && piece.t === 'k' && !ev.blocked && S.board[m.to] && S.board[m.to].t === 'k';
   let win = '';
-  if (!alive(S.board, o)) win = '폭발로 상대 킹 제거';
-  else if (has(S, c, 'hill') && piece && piece.t === 'k' && HILL.includes(m.to)) win = '언덕의 왕';
+  if (!alive(S.board, o)) win = ev.boom.length ? '폭발로 상대 킹 제거' : '킹 포획';
+  else if (has(S, c, 'hill') && kingMoved && HILL.includes(m.to)) win = '언덕의 왕';
+  else if (has(S, c, 'kingMarch') && kingMoved && rankOf(c, m.to) === 7) win = '왕의 행진';
+  if (!win && has(S, c, 'hunter')) { S.kills[c] += before - count(S.board); if (S.kills[c] >= HUNT_GOAL) win = '사냥꾼 (' + HUNT_GOAL + '개 처치)'; }
   const chk = !win && inDanger(S, o);
-  if (chk && has(S, c, 'threeCheck')) { S.checks[c]++; if (S.checks[c] >= 3) win = '3체크'; }
+  if (chk && has(S, c, 'threeCheck')) { S.checks[c]++; if (S.checks[c] >= 3) win = '3회 공격'; }
   S.log.push({c, t: note(s0, m, c, ev, chk), sub: S.sub});
   if (win) { S.winner = c; S.reason = win; return; }
   if (S.dblTurn && S.sub === 0 && !chk) {
@@ -78,15 +81,10 @@ function chooseCore(id) {
   if (!S.pick.opts || !S.pick.opts.includes(id)) return;
   S.aug[c].push(id);
   let msg = '증강: ' + AUG[id].name;
-  if (id === 'revive') {
-    const rv = reviveTarget(S, c);
-    if (rv) {
-      S.board[rv.sq] = {c, t: rv.t};
-      S.lost[c].splice(S.lost[c].indexOf(rv.t), 1);
-      msg += ' (' + GLYPH[rv.t] + sqName(rv.sq) + ')';
-    }
-  }
+  if (AUG[id].instant) { const d = instant(S, c, id); if (d) msg += ' (' + d + ')'; }
   if (id === 'double') S.dbl[c] = 0;
+  if (id === 'hunter') S.kills[c] = 0;
+  if (id === 'threeCheck') S.checks[c] = 0;
   S.log.push({c, t: msg, aug: 1});
   S.queue.shift(); S.pick = null;
   if (nextPick()) return;
@@ -135,7 +133,8 @@ function commit(before) {
     pending = false; netErr = '저장하지 못했습니다: ' + e.message; resync(); view();
   });
 }
-function parseState(str) { try { const s = JSON.parse(str); return s && Array.isArray(s.board) ? s : null; } catch { return null; } }
+function fixState(s) { if (s && !s.kills) s.kills = {w: 0, b: 0}; return s; }
+function parseState(str) { try { const s = JSON.parse(str); return s && Array.isArray(s.board) ? fixState(s) : null; } catch { return null; } }
 function resync() { if (room) { const s = parseState(room.state); if (s) { S = s; ver = room.ver; } } }
 function saveLocal() { try { localStorage.setItem(LS, JSON.stringify({S, H: H.slice(-60)})); } catch {} }
 
@@ -294,7 +293,7 @@ function restoreLocal(first) {
   mode = 'local'; me = null;
   try {
     const d = JSON.parse(localStorage.getItem(LS));
-    if (d && d.S && Array.isArray(d.S.board) && d.S.log && d.S.log.length) { S = d.S; H = d.H || []; view(); return; }
+    if (d && d.S && Array.isArray(d.S.board) && d.S.log && d.S.log.length) { S = fixState(d.S); H = d.H || []; view(); return; }
   } catch {}
   showStart = !!first && ONLINE_READY;
   newGame();
@@ -352,6 +351,8 @@ function renderBoard(D) {
   const tg = new Map();
   if (sel) for (const m of LM) if (sel.drop ? m.drop === sel.drop : m.from === sel.from) tg.set(m.to, m);
   const atom = has(D, D.turn, 'atomic');
+  // 이 수를 두면 내 킹이 공격받게 되는지 (킹 포획 규칙이라 둘 수는 있지만 경고한다)
+  const risky = m => { const n = apply(D, m, D.turn)[0]; return alive(n.board, oth(D.turn)) && inDanger(n, D.turn); };
   const kingSq = inCheck && !D.winner ? D.board.findIndex(p => p && p.t === 'k' && p.c === D.turn) : -1;
   let h = '';
   for (let i = 0; i < 64; i++) {
@@ -362,12 +363,16 @@ function renderBoard(D) {
     if (D.last && Array.isArray(D.last.boom) && D.last.boom.includes(x)) cl.push('boom');
     if (sel && sel.from === x) cl.push('sel');
     if (x === kingSq) cl.push('chk');
-    if (tg.has(x)) { const m = tg.get(x); if (p || m.ep) { cl.push('cap'); if (atom) cl.push('atom'); } else { cl.push('dot'); if (m.drop) cl.push('drop'); } }
+    if (tg.has(x)) { const m = tg.get(x); if (p || m.ep) { cl.push('cap'); if (atom) cl.push('atom'); } else { cl.push('dot'); if (m.drop) cl.push('drop'); } if (risky(m)) cl.push('risk'); }
     let inner = '';
-    if (p) { const mt = markTier(D, p.c, p.t); inner = '<span class="pc ' + cc(p.c) + '">' + (GLYPH[p.t] || '?') + '</span>' + (mt ? '<span class="mk ' + mt + '"></span>' : ''); }
+    if (p) {
+      const mt = markTier(D, p.c, p.t);
+      inner = (p.fz ? '<span class="ice"></span>' : '') + (p.sh ? '<span class="shl"></span>' : '') + '<span class="pc ' + cc(p.c) + '">' + (GLYPH[p.t] || '?') + '</span>' + (mt ? '<span class="mk ' + mt + '"></span>' : '');
+    }
     if (row === 7) inner += '<span class="co f">' + 'abcdefgh'[f] + '</span>';
     if (col === 0) inner += '<span class="co r">' + (r + 1) + '</span>';
-    h += '<div class="' + cl.join(' ') + '" data-x="' + x + '" role="gridcell" aria-label="' + sqName(x) + '">' + inner + '</div>';
+    const lab = sqName(x) + (p ? ' ' + nm(p.c) + ' ' + ({k: '킹', q: '퀸', r: '룩', b: '비숍', n: '나이트', p: '폰'}[p.t] || '') + (p.sh ? ' 보호막' : '') + (p.fz ? ' 빙결 ' + (+p.fz) : '') : '');
+    h += '<div class="' + cl.join(' ') + '" data-x="' + x + '" role="gridcell" aria-label="' + esc(lab) + '" title="' + esc(lab) + '">' + inner + '</div>';
   }
   $('board').innerHTML = h;
 }
@@ -375,13 +380,14 @@ function trayHTML(D, c) {
   const on = !D.winner && !D.pick && D.turn === c;
   const handOn = on && LM.length > 0;
   const augs = D.aug[c].filter(id => AUG[id]);
-  const chips = augs.length ? augs.map(id => '<span class="chip ' + AUG[id].tier + '" title="' + esc(AUG[id].desc) + '">' + esc(AUG[id].name) + '</span>').join('') : '<span class="mute">아직 증강 없음</span>';
+  const chips = augs.length ? augs.map(id => '<span class="chip ' + AUG[id].tier + '" title="' + esc(CAT_KO[AUG[id].cat] + ' · ' + AUG[id].desc) + '">' + esc(AUG[id].name) + '</span>').join('') : '<span class="mute">아직 증강 없음</span>';
   const meta = [];
   if (has(D, c, 'drop')) {
     const hd = Object.entries(D.hand[c] || {}).filter(([t, n]) => n > 0 && GLYPH[t]).sort((a, b) => VAL[b[0]] - VAL[a[0]]);
     meta.push('<span>손패 ' + (hd.length ? '<span class="hand">' + hd.map(([t, n]) => '<button type="button" class="' + (sel && sel.drop === t && handOn ? 'on' : '') + '" data-h="' + t + '" ' + (handOn ? '' : 'disabled') + ' aria-label="' + t + ' 드롭">' + GLYPH[t] + '<small>×' + (+n) + '</small></button>').join('') + '</span>' : '<b>비어 있음</b>') + '</span>');
   }
-  if (has(D, c, 'threeCheck')) meta.push('<span>체크 <span class="pips">' + [0, 1, 2].map(i => '<i class="' + (i < D.checks[c] ? 'f' : '') + '"></i>').join('') + '</span></span>');
+  if (has(D, c, 'hunter')) meta.push('<span>사냥 <b>' + (+D.kills[c] || 0) + '/' + HUNT_GOAL + '</b></span>');
+  if (has(D, c, 'threeCheck')) meta.push('<span>킹 공격 <span class="pips">' + [0, 1, 2].map(i => '<i class="' + (i < D.checks[c] ? 'f' : '') + '"></i>').join('') + '</span></span>');
   if (has(D, c, 'double')) {
     const ready = (on && D.dblTurn) || D.dbl[c] >= 2;
     meta.push('<span>연속 행동 <span class="pips g">' + [0, 1, 2].map(i => '<i class="' + (ready || i < D.dbl[c] ? 'f' : '') + '"></i>').join('') + '</span>' + (on && D.dblTurn ? ' <b>' + (D.sub ? '두 번째 수' : '이번 턴 두 수') + '</b>' : '') + '</span>');
@@ -411,10 +417,11 @@ function statusHTML(D) {
     st = '<h2>' + (mine ? nm(D.pick.c) + ' 증강 선택 중' : me ? '상대가 증강을 고르는 중' : nm(D.pick.c) + '이 증강을 고르는 중') + '</h2><p>' + (+D.pick.r || '') + '라운드 · ' + (TIER_KO[D.pick.tier] || '') + ' 등급</p>';
   } else {
     const head = online ? (me ? (D.turn === me ? '내 차례' : '상대 차례') + ' · ' + nm(D.turn) : nm(D.turn) + ' 차례 (관전 중)') : nm(D.turn) + ' 차례';
-    st = '<h2>' + head + (inCheck ? ' · 체크!' : '') + '</h2>';
+    st = '<h2>' + head + '</h2>' + (inCheck ? '<p class="err">' + nm(D.turn) + ' 킹이 공격받고 있습니다. 피하지 않으면 잡힙니다.</p>' : '');
     const myMove = !online || D.turn === me;
     let hint = '말을 눌러 갈 수 있는 칸을 보세요.';
-    if (D.dblTurn) hint = D.sub ? '연속 행동: 두 번째 수를 두거나 넘기세요.' : '연속 행동 턴: 첫 수로 체크를 주면 턴이 끝납니다.';
+    if (D.dblTurn) hint = D.sub ? '연속 행동: 두 번째 수를 두거나 넘기세요.' : '연속 행동 턴: 첫 수로 상대 킹을 공격하면 턴이 끝납니다.';
+    else if (!sel && myMove) hint = '말을 눌러 갈 수 있는 칸을 보세요. 빨간 점은 두면 내 킹이 잡힐 수 있는 칸입니다.';
     else if (sel && sel.drop) hint = '놓을 빈칸을 고르세요.';
     else if (online && !myMove) hint = '상대가 두기를 기다리는 중입니다.';
     st += '<p>' + hint + '</p>';
@@ -497,8 +504,8 @@ function renderModal(D) {
     const c = P.c, o = oth(c);
     const oa = D.aug[o].filter(id => AUG[id]).map(id => AUG[id].name).join(', ') || '없음';
     const opts = P.opts.filter(id => AUG[id]);
-    d.innerHTML = '<h2>' + nm(c) + ' · ' + (+P.r) + '라운드 증강</h2><p>' + (TIER_KO[P.tier] || '') + ' 라운드입니다. 한 장을 고르세요. 증강은 지금부터 효과가 납니다.</p><div class="deal">' +
-      opts.map(id => '<button type="button" class="aug ' + AUG[id].tier + '" data-aug="' + id + '"' + (pending ? ' disabled' : '') + '><span class="tier">' + TIER_KO[AUG[id].tier] + '</span><h3>' + esc(AUG[id].name) + '</h3><p>' + esc(AUG[id].desc) + '</p></button>').join('') +
+    d.innerHTML = '<h2>' + nm(c) + ' · ' + (+P.r) + '라운드 증강</h2><p>' + (TIER_KO[P.tier] || '') + ' 라운드입니다. 한 장을 고르세요. 증강은 지금부터 효과가 나고, "즉시" 증강은 고르는 순간 판이 바뀝니다.</p><div class="deal">' +
+      opts.map(id => '<button type="button" class="aug ' + AUG[id].tier + '" data-aug="' + id + '"' + (pending ? ' disabled' : '') + '><span class="tier">' + CAT_KO[AUG[id].cat] + ' · ' + TIER_KO[AUG[id].tier] + (AUG[id].instant ? ' · 즉시' : '') + '</span><h3>' + esc(AUG[id].name) + '</h3><p>' + esc(AUG[id].desc) + '</p></button>').join('') +
       '</div><p class="opp">' + nm(o) + '의 증강: ' + esc(oa) + '</p>' +
       (mode === 'local' && ONLINE_READY && !D.log.length ? '<div class="row"><button type="button" id="bStart">온라인 대전으로 바꾸기</button></div>' : '');
     ov.hidden = false; return;
@@ -506,7 +513,9 @@ function renderModal(D) {
   ov.hidden = true; d.innerHTML = '';
 }
 
-$('cat').innerHTML = ['silver', 'gold', 'prism'].map(t => Object.values(AUG).filter(a => a.tier === t).map(a => '<div class="' + t + '"><b>' + esc(a.name) + '</b> · ' + TIER_KO[t] + '<br>' + esc(a.desc) + '</div>').join('')).join('');
+const CAT_WHEN = {open: '1라운드에만', mid: '2·3라운드', end: '3·4라운드', piece: '모든 라운드', rule: '모든 라운드'};
+$('cat').innerHTML = Object.keys(CAT_KO).map(k => '<h4>' + CAT_KO[k] + ' <span class="mute">' + CAT_WHEN[k] + '</span></h4>' +
+  Object.values(AUG).filter(a => a.cat === k).sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier]).map(a => '<div class="' + a.tier + '"><b>' + esc(a.name) + '</b> · ' + TIER_KO[a.tier] + (a.instant ? ' · 즉시' : '') + '<br>' + esc(a.desc) + '</div>').join('')).join('');
 
 /* ---------- 시작 ---------- */
 (async function boot() {

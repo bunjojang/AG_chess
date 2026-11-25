@@ -125,3 +125,9 @@ button[hidden]{display:none}
 .start h3{font-size:26px}
 .start p{margin:6px 0 0}
 .dlg .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.sq.dot.risk::before{background:rgba(214,48,30,.62)}
+.sq.cap.risk::before{border-color:rgba(214,48,30,.9);border-style:dashed}
+.shl{position:absolute;inset:8%;border-radius:50%;border:max(2px,.5cqw) solid #4aa8ff;box-shadow:0 0 1.2cqw #4aa8ffaa,inset 0 0 1.2cqw #4aa8ff66;z-index:1}
+.ice{position:absolute;inset:0;background:linear-gradient(135deg,rgba(190,230,255,.75),rgba(120,180,240,.45));z-index:1}
+.cat h4{margin:12px 0 2px;font-family:"Do Hyeon","Noto Sans KR",sans-serif;font-weight:400;font-size:20px}
+.cat h4 .mute{font-family:"Noto Sans KR",sans-serif}
