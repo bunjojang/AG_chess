@@ -1,9 +1,9 @@
 // 화면과 진행. 게임 상태 S는 순수 JSON이고, 모든 변경은 act()를 거친다.
 // 한 화면 모드: act가 바로 반영하고 무르기용 기록을 남긴다.
 // 온라인 모드: act가 낙관적으로 반영한 뒤 버전 검사 트랜잭션으로 방에 저장한다. 실패하면 서버 상태로 되돌린다.
-import {AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js?v=4';
-import {connect} from './net.js?v=4';
-import {firebaseConfig} from './config.js?v=4';
+import {AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js?v=5';
+import {connect} from './net.js?v=5';
+import {firebaseConfig} from './config.js?v=5';
 
 const MARK = {p: ['pawn2', 'pawnBack', 'pawnSide', 'battlePromo', 'earlyPromo'], n: ['centaur', 'nightrider'], b: ['archbishop', 'wazirBishop'], r: ['chancellor', 'cannon'], q: ['amazon'], k: ['stride', 'knightKing']};
 const $ = id => document.getElementById(id);
@@ -450,7 +450,7 @@ function roomHTML() {
       '<div class="row"><button type="button" id="bLeave">방 나가기 (한 화면 모드)</button></div>';
   }
   if (!ONLINE_READY) {
-    return '<h3>온라인 대전</h3><p class="mute">js/config.js에 Firebase 설정을 넣으면 켜집니다. README의 "온라인 대전 켜기"를 보세요.</p>';
+    return '<h3>온라인 대전</h3><p class="mute">js/config.js에 Firebase 설정을 넣으면 켜집니다. docs/setup.md를 보세요.</p>';
   }
   return '<h3>온라인 대전</h3><p class="mute">방을 만들면 링크가 생깁니다. 상대가 그 링크로 들어오면 남은 색 자리에 앉습니다.</p>' +
     '<div class="row"><button type="button" data-make="w">백으로 방 만들기</button><button type="button" data-make="b">흑으로</button><button type="button" data-make="r">무작위</button></div>' +

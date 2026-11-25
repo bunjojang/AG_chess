@@ -5,38 +5,20 @@
 - **한 화면 2인**: 설정 없이 바로 됩니다.
 - **온라인 2인**: 방을 만들고 링크를 보내면 상대가 남은 색 자리에 앉습니다. 계정 없이 익명으로 접속하고, 새로고침해도 같은 자리로 돌아옵니다. 세 번째로 들어온 사람은 관전합니다. 무르기와 무승부는 상대가 수락해야 합니다.
 
-온라인 대전은 Firebase(Google의 무료 실시간 DB)로 동작합니다. 아래 "온라인 대전 켜기"를 한 번 해 두면 됩니다.
+**플레이: https://bunjojang.github.io/AG_chess/** — 링크만 열면 됩니다. 설치나 가입은 필요 없어요.
 
-## 1. GitHub Pages로 올리기
+## 운영 정보 (설정 완료)
 
-1. 저장소 **Settings → Pages**로 갑니다.
-2. **Build and deployment → Source**를 `Deploy from a branch`로 두고, Branch를 `main` / `/(root)`로 고른 뒤 **Save**를 누릅니다.
-3. 1~2분 뒤 `https://<GitHub 아이디>.github.io/<저장소 이름>/` 에서 열립니다.
+플레이하는 사람은 아무것도 설정할 필요가 없습니다. 아래는 운영자용 기록입니다.
 
-이 상태로도 한 화면 2인은 바로 할 수 있습니다.
-
-## 2. 온라인 대전 켜기 (Firebase, 약 5분)
-
-1. https://console.firebase.google.com 에서 **프로젝트 추가**를 누릅니다. Google 애널리틱스는 꺼도 됩니다.
-2. 왼쪽 메뉴 **빌드 → Authentication → 시작하기 → 로그인 방법** 탭에서 **익명**을 사용 설정합니다.
-3. **빌드 → Realtime Database → 데이터베이스 만들기**를 누릅니다. 위치는 `싱가포르(asia-southeast1)`가 한국에서 가장 가깝고, **잠금 모드로 시작**을 고릅니다.
-4. Realtime Database의 **규칙** 탭을 열고, 이 저장소의 `database.rules.json` 내용을 그대로 붙여 넣은 뒤 **게시**합니다.
-5. 톱니바퀴 **프로젝트 설정 → 일반 → 내 앱**에서 웹 아이콘(`</>`)을 눌러 앱을 등록합니다. 호스팅은 체크하지 않아도 됩니다.
-6. 화면에 나오는 `firebaseConfig = { ... }` 값을 복사해서 `js/config.js`의 `export const firebaseConfig = null;`을 바꿉니다.
-   ```js
-   export const firebaseConfig = {
-     apiKey: "...",
-     authDomain: "...",
-     databaseURL: "https://...firebasedatabase.app",
-     projectId: "...",
-     appId: "..."
-   };
-   ```
-   `databaseURL`이 빠져 있으면 Realtime Database 화면 맨 위에 보이는 주소(`https://...firebasedatabase.app`)를 직접 넣어 주세요.
-7. **Authentication → 설정 → 승인된 도메인**에 `<GitHub 아이디>.github.io`를 추가합니다.
-8. `js/config.js`를 커밋해서 올리면 끝입니다. 페이지의 "온라인 대전" 칸에 방 만들기 버튼이 나타납니다.
-
-`firebaseConfig` 값은 공개 저장소에 올라가도 괜찮습니다. 웹 앱용 식별자일 뿐이고, 누가 무엇을 쓸 수 있는지는 4단계의 보안 규칙이 정합니다.
+- **호스팅**: GitHub Pages, `main` 브랜치 루트
+- **온라인 서버**: Firebase 프로젝트 `ag-chess-d97b8`
+  - Realtime Database 위치: 싱가포르(asia-southeast1)
+  - 익명 로그인 사용
+  - 승인된 도메인에 `bunjojang.github.io` 추가
+- **보안 규칙**: `database.rules.json`이 원본입니다. 이 파일을 고치면 Firebase 콘솔 → Realtime Database → 규칙에 다시 붙여 넣고 게시해야 반영됩니다.
+- **무료 요금제 한도**: 동시 접속 100개(브라우저 탭 하나가 1개)라 동시에 약 50판까지 됩니다. 카드를 등록하지 않았으므로 한도를 넘으면 요금이 나가는 대신 접속이 막힙니다.
+- **처음부터 다시 만들 때**(다른 계정으로 옮기거나 저장소를 복제한 경우): `docs/setup.md`의 순서를 따르세요.
 
 ### 보안 규칙이 막는 것
 - 로그인(익명)하지 않은 접근
@@ -62,7 +44,7 @@ python3 -m http.server 8000
 
 ## 수정해서 올릴 때
 
-GitHub Pages는 파일을 10분 정도 캐시합니다. 일부 파일만 새 버전으로 받으면 화면이 깨질 수 있어서, `index.html`과 `js/app.js`의 `?v=4` 숫자를 함께 올려 주세요(모두 같은 숫자로).
+GitHub Pages는 파일을 10분 정도 캐시합니다. 일부 파일만 새 버전으로 받으면 화면이 깨질 수 있어서, `index.html`과 `js/app.js`의 `?v=5` 숫자를 함께 올려 주세요(모두 같은 숫자로).
 
 ## 파일 구조
 
@@ -72,7 +54,8 @@ GitHub Pages는 파일을 10분 정도 캐시합니다. 일부 파일만 새 버
 | `js/app.js` | 화면, 진행, 온라인 방(좌석·트랜잭션·요청) |
 | `js/net.js` | 동기화 계층. Firebase와 시험용 메모리 구현 |
 | `js/config.js` | Firebase 설정 |
-| `database.rules.json` | Realtime Database 보안 규칙 |
+| `database.rules.json` | Realtime Database 보안 규칙 (원본) |
+| `docs/setup.md` | 처음부터 다시 설정할 때의 순서 |
 | `css/style.css` | 스타일 |
 
 ## 규칙
