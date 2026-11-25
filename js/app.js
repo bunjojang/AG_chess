@@ -2,9 +2,9 @@
 // 한 화면 모드: 상태 S를 바로 바꾸고 무르기용 기록(H)을 남긴다.
 // 온라인 모드: 방에는 "누가 무엇을 했는지"(행동 기록)만 쌓는다. 각 브라우저가 방의 시드로 처음부터 다시 두어 보며
 //   모든 행동을 엔진으로 검사한다. 규칙에 없는 수, 차례가 아닌 수, 지난 기록을 몰래 바꾼 흔적이 보이면 그 판을 멈추고 알린다.
-import {setRng, seededRng, AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js?v=6';
-import {connect, TIME} from './net.js?v=6';
-import {firebaseConfig} from './config.js?v=6';
+import {setRng, seededRng, AUG, CAT_KO, TIER_KO, TIER_RANK, GLYPH, VAL, HILL, PICK_AT, HUNT_GOAL, oth, has, alive, rankOf, initial, apply, inDanger, legal, tick, instant, offers, rollTier, sqName, note} from './engine.js?v=7';
+import {connect, TIME} from './net.js?v=7';
+import {firebaseConfig} from './config.js?v=7';
 
 const MARK = {p: ['pawn2', 'pawnBack', 'pawnSide', 'battlePromo', 'earlyPromo'], n: ['centaur', 'nightrider'], b: ['archbishop', 'wazirBishop'], r: ['chancellor', 'cannon'], q: ['amazon'], k: ['stride', 'knightKing']};
 const $ = id => document.getElementById(id);
@@ -27,6 +27,7 @@ let cache = null;        // known까지 다시 둔 결과 {n, s: JSON}
 let tamper = '';         // 규칙 위반/변조를 감지하면 그 설명
 let undoAsked = false;   // 내가 무르기를 요청했는가
 let myTruncate = -1;     // 내가 무르기를 수락하며 자른 길이
+let roomKey = '';         // 초대 열쇠: 링크에 있으면 빈 자리에 앉을 수 있다
 
 /* ---------- 게임 진행 (S만 바꾼다, 화면은 건드리지 않음) ---------- */
 function settle() {
@@ -218,17 +219,17 @@ async function ensureNet() {
 }
 const ID_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const randStr = (n, ch) => { const a = new Uint32Array(n); crypto.getRandomValues(a); return Array.from(a, v => ch[v % ch.length]).join(''); };
-const roomLink = id => location.origin + location.pathname + '?room=' + id + (NETKIND === 'mem' ? '&net=mem' : '');
+const roomLink = (id, key) => location.origin + location.pathname + '?room=' + id + (key ? '&k=' + key : '') + (NETKIND === 'mem' ? '&net=mem' : '');
 
 // 방을 만든다. seats: 내 자리, reserved: 재대국에서 두 사람 자리를 미리 잡아 둘 때
-async function makeRoom(seats, reserved) {
+async function makeRoom(seats, reserved, key) {
   const n = await ensureNet();
   if (!n) return null;
   for (let tries = 0; tries < 4; tries++) {
     const id = randStr(6, ID_CH);
     const r = {seats, seed: randStr(16, ID_CH), createdBy: n.uid, createdAt: TIME, updatedAt: TIME};
     if (reserved) r.reserved = reserved;
-    const res = await n.create(id, r).catch(() => 'denied');
+    const res = await n.create(id, r, key).catch(() => 'denied');
     if (res === 'ok') { sweep(); return id; }
     if (res === 'denied') { netErr = '방은 20초에 하나씩만 만들 수 있습니다. 잠시 뒤 다시 시도해 주세요.'; return null; }
   }
@@ -251,9 +252,11 @@ async function createRoom(color) {
   const n = await ensureNet();
   if (!n) { view(); return; }
   const c = color === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : color;
-  const id = await makeRoom({[c]: n.uid});
+  const key = randStr(16, ID_CH);
+  const id = await makeRoom({[c]: n.uid}, null, key);
   if (!id) { view(); return; }
-  history.replaceState(null, '', roomLink(id));
+  roomKey = key;
+  history.replaceState(null, '', roomLink(id, key));
   enterRoom(id);
 }
 function enterRoom(id) {
@@ -266,7 +269,7 @@ function processRoom() {
   const r = room;
   if (!r) { netErr = '방을 찾을 수 없습니다. 오래되어 정리되었을 수 있습니다.'; S = null; view(); return; }
   if (typeof r.seed !== 'string' || !r.seats || typeof r.seats !== 'object') { netErr = '방 데이터가 올바르지 않습니다.'; view(); return; }
-  if (typeof r.next === 'string' && ROOM_RE.test(r.next)) { location.replace(roomLink(r.next)); return; }
+  if (typeof r.next === 'string' && ROOM_RE.test(r.next)) { location.replace(roomLink(r.next, '')); return; }
   me = colorOf(r.seats, net.uid);
   if (!me && !claiming && (!r.seats.w || !r.seats.b)) claimSeat(r);
   if (me !== lastMe) { flip = me === 'b'; lastMe = me; }
@@ -278,9 +281,13 @@ function processRoom() {
 function claimSeat(r) {
   const c = !r.seats.w ? 'w' : !r.seats.b ? 'b' : null;
   if (!c) return;
-  if (r.reserved && r.reserved[c] !== net.uid) return; // 재대국 방: 원래 두 사람만 앉는다
+  const paths = {['seats/' + c]: net.uid};
+  if (r.reserved) { if (r.reserved[c] !== net.uid) return; } // 재대국 방: 원래 두 사람만 앉는다
+  else if (roomKey) paths['proofs/' + net.uid] = roomKey;      // 초대 링크의 열쇠로 자리를 증명
+  else return;                                                 // 열쇠 없는 링크: 관전만
+  if (r.proofs && r.proofs[net.uid]) delete paths['proofs/' + net.uid];
   claiming = true;
-  net.patch(roomId, {['seats/' + c]: net.uid}).catch(() => {}).finally(() => { claiming = false; });
+  net.patch(roomId, paths).catch(() => {}).finally(() => { claiming = false; });
 }
 // 내 행동을 보낸다: 먼저 내 화면에서 규칙대로 둬 보고, 통과하면 방에 다음 번호로 붙인다
 function send(a) {
@@ -323,7 +330,7 @@ async function rematch() {
   const id = await makeRoom({[oth(me)]: net.uid}, {[oth(me)]: net.uid, [me]: opp});
   if (!id) { view(); return; }
   await net.patch(roomId, {next: id}).catch(() => {});
-  location.replace(roomLink(id));
+  location.replace(roomLink(id, ''));
 }
 
 /* ---------- 입력 ---------- */
@@ -406,7 +413,7 @@ document.addEventListener('click', e => {
     case 'bCancel': cancelReq(); break;
     case 'bLocal': showStart = false; render(); break;
     case 'bStart': showStart = true; render(); break;
-    case 'bCopy': navigator.clipboard.writeText(roomLink(roomId)).then(() => { copied = true; render(); setTimeout(() => { copied = false; render(); }, 1600); }).catch(() => { const i = $('roomLink'); if (i) i.select(); }); break;
+    case 'bCopy': navigator.clipboard.writeText(roomLink(roomId, roomKey)).then(() => { copied = true; render(); setTimeout(() => { copied = false; render(); }, 1600); }).catch(() => { const i = $('roomLink'); if (i) i.select(); }); break;
     case 'bLeave': location.href = location.pathname + (NETKIND === 'mem' ? '?net=mem' : ''); break;
   }
 });
@@ -491,7 +498,8 @@ function statusHTML(D) {
     st = '<h2>' + res + '</h2><p>' + esc(D.reason) + '</p>';
     if (!online || me) st += '<div class="row"><button type="button" id="bAgain">' + (online ? '재대국 (색 바꿔서)' : '새 게임') + '</button></div>';
   } else if (online && !seated()) {
-    st = '<h2>상대를 기다리는 중</h2><p>아래 링크를 상대에게 보내세요. 들어오면 바로 시작합니다.</p>';
+    st = me ? '<h2>상대를 기다리는 중</h2><p>아래 링크를 상대에게 보내세요. 들어오면 바로 시작합니다.</p>'
+      : '<h2>빈 자리가 있는 방</h2><p>자리에 앉으려면 방을 만든 사람에게 받은 초대 링크(끝에 &k=가 붙은 주소)로 들어와야 합니다. 지금은 관전만 됩니다.</p>';
   } else if (D.pick) {
     const mine = !online || D.pick.c === me;
     st = '<h2>' + (mine ? nm(D.pick.c) + ' 증강 선택 중' : me ? '상대가 증강을 고르는 중' : nm(D.pick.c) + '이 증강을 고르는 중') + '</h2><p>' + (+D.pick.r || '') + '라운드 · ' + (TIER_KO[D.pick.tier] || '') + ' 등급</p>';
@@ -531,7 +539,7 @@ function roomHTML() {
     const me2 = me ? nm(me) : '관전자';
     return '<h3>온라인 방 <span class="code">' + esc(roomId) + '</span></h3>' +
       '<p class="mute">나: ' + me2 + (NETKIND === 'mem' ? ' · 테스트 모드(같은 브라우저 탭끼리)' : '') + '</p>' +
-      '<div class="linkrow"><input id="roomLink" readonly value="' + esc(roomLink(roomId)) + '" aria-label="방 링크"><button type="button" id="bCopy">' + (copied ? '복사됨' : '링크 복사') + '</button></div>' +
+      '<div class="linkrow"><input id="roomLink" readonly value="' + esc(roomLink(roomId, roomKey)) + '" aria-label="방 링크"><button type="button" id="bCopy">' + (copied ? '복사됨' : '링크 복사') + '</button></div>' +
       '<div class="row"><button type="button" id="bLeave">방 나가기 (한 화면 모드)</button></div>';
   }
   if (!ONLINE_READY) {
@@ -605,6 +613,7 @@ $('cat').innerHTML = Object.keys(CAT_KO).map(k => '<h4>' + CAT_KO[k] + ' <span c
 /* ---------- 시작 ---------- */
 (async function boot() {
   const rid = (params.get('room') || '').toUpperCase();
+  roomKey = /^[A-Z2-9]{12,40}$/.test(params.get('k') || '') ? params.get('k') : '';
   if (ROOM_RE.test(rid)) {
     mode = 'online'; roomId = rid; S = null; render();
     const n = await ensureNet();

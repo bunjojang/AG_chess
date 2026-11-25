@@ -4,7 +4,8 @@
 // 두 구현 모두 같은 모양이다:
 //   uid
 //   subscribe(id, cb, onErr)            방이 바뀔 때마다 cb(방 또는 null)
-//   create(id, room) -> 'ok'|'exists'|'denied'   (보안 규칙: 한 사람당 20초에 방 하나)
+//   create(id, room, secret) -> 'ok'|'exists'|'denied'   (보안 규칙: 한 사람당 20초에 방 하나)
+//     secret은 읽을 수 없는 곳에 저장되고, 링크에 이 값을 가진 사람만 빈 자리에 앉을 수 있다
 //   append(id, i, action, extra) -> bool  actions/i가 비어 있을 때만 쓴다
 //   patch(id, paths) -> bool             방 안의 여러 경로를 한 번에 바꾼다 (null이면 지움)
 //   staleRooms(before, n) -> [{id, r}]    updatedAt이 before보다 오래된 방
@@ -33,9 +34,11 @@ export async function connect(config, kind) {
   return {
     uid: user.uid,
     subscribe(id, cb, onErr) { return D.onValue(R(id), snap => cb(snap.val()), onErr); },
-    async create(id, room) {
+    async create(id, room, secret) {
       try {
-        await D.update(D.ref(db), {['rooms/' + id]: room, ['limits/' + user.uid]: TIME});
+        const p = {['rooms/' + id]: room, ['limits/' + user.uid]: TIME};
+        if (secret) p['secrets/' + id] = secret;
+        await D.update(D.ref(db), p);
         return 'ok';
       } catch (e) {
         const snap = await D.get(R(id)).catch(() => null);
@@ -110,8 +113,9 @@ function memNet() {
       chan(id);
       setTimeout(() => cb(read(id)));
     },
-    async create(id, room) {
+    async create(id, room, secret) {
       if (read(id)) return 'exists';
+      if (secret) localStorage.setItem('mem-secret:' + id, secret);
       const lim = +(localStorage.getItem('mem-limit:' + uid) || 0);
       if (Date.now() - lim < 20000 && !sessionStorage.getItem('mem-nolimit')) return 'denied';
       localStorage.setItem('mem-limit:' + uid, String(Date.now()));
@@ -129,7 +133,12 @@ function memNet() {
     async patch(id, paths) {
       const cur = read(id);
       if (!cur) return false;
-      for (const p of Object.keys(paths)) if (p.startsWith('seats/') && getPath(cur, p) !== undefined) return false;
+      for (const p of Object.keys(paths)) {
+        if (!p.startsWith('seats/')) continue;
+        if (getPath(cur, p) !== undefined) return false;
+        const c = p.slice(6);
+        if (cur.reserved ? cur.reserved[c] !== uid : paths['proofs/' + uid] !== localStorage.getItem('mem-secret:' + id)) return false;
+      }
       for (const [p, v] of Object.entries(paths)) setPath(cur, p, v);
       write(id, cur);
       return true;
